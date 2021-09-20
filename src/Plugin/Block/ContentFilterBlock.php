@@ -21,6 +21,13 @@ class ContentFilterBlock extends BlockBase {
     $current_user = \Drupal::currentUser();
     $user = $current_user->id();
     $form = \Drupal::formBuilder()->getForm('Drupal\content_filter\Form\ContentFilterForm', $user);
+    $form['actions'] = [
+      '#type' => 'actions',
+    ];
+    $form['actions']['submit'] = [
+      '#type' => 'submit',
+      '#value' => $this->t('Submit'),
+    ];
     return $form;
   }
 
