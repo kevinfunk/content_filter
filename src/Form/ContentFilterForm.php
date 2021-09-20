@@ -33,7 +33,7 @@ class ContentFilterForm extends ConfigFormBase {
     $display = $config->get('content_filter_display');
     if (count($vids)) {
       $form['content_filter']['content_filter_scheme_1'] = [
-        '#type' => 'details',
+        '#type' => 'fieldset',
         '#title' => $this->t('Content Filter'),
         '#description' => $this->t('Filter content by preferences.'),
         '#open' => TRUE,
