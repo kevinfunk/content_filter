@@ -1,0 +1,12 @@
+<?php
+/**
+ * @file
+ * Installation functions for Content Filter module.
+ */
+
+/**
+ * Implements hook_install().
+ */
+function content_filter_install() {
+  module_set_weight('content_filter', 100);
+}

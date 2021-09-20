@@ -1,0 +1,7 @@
+content_filter.administration:
+  path: '/admin/config/people/content_filter'
+  defaults:
+    _form: '\Drupal\content_filter\Form\ConfigForm'
+    _title: 'Content Filter'
+  requirements:
+    _permission: 'administer site configuration'

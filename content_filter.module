@@ -1,0 +1,215 @@
+<?php
+/**
+ * @file
+ * Control access to site content based on taxonomy, roles and users.
+ */
+
+use Drupal\node\NodeInterface;
+use Drupal\taxonomy\Entity\Term;
+use Drupal\taxonomy\Entity\Vocabulary;
+use Drupal\Core\Form\FormStateInterface;
+use Drupal\content_filter\Form\ContentFilterForm;
+use Drupal\Core\Session\AccountInterface;
+use Drupal\Core\Routing\RouteMatchInterface;
+
+/**
+ * Implements hook_help().
+ */
+function content_filter_help($route_name, RouteMatchInterface $route_match) {
+  switch ($route_name) {
+    // Main module help for the block module.
+    case 'help.page.content_filter':
+      $output = '<h3>' . t('About') . '</h3>';
+      $output .= '<p>' . t('The Content Filter module allows you a user to filter content by a taxonomy term.') . '</p>';
+      return ['#markup' => $output];
+  }
+}
+/**
+ * Implements hook_node_access_records().
+ */
+function content_filter_node_access_records(NodeInterface $node) {
+  $tids = _content_filter_get_terms($node);
+  if (count($tids)) {
+    // If we're here, the node has terms associated with it which restrict
+    // access to the node.
+    $grants = [];
+    // Only apply grants to published nodes.
+    if ($node->isPublished() ) {
+      foreach ($tids as $tid) {
+        $grant = [
+          'realm' => 'content_filter_config_scheme_1',
+          // Use term id as grant id.
+          'gid' => $tid,
+          'grant_view' => 1,
+          'grant_update' => 0,
+          'grant_delete' => 0,
+          'priority' => 0,
+        ];
+        $grant['grant_view'] = 1;
+        $grants[] = $grant;
+      }
+    }
+    return $grants;
+  }
+}
+
+/**
+ * Gets terms from a node that belong to vocabularies selected.
+ */
+function _content_filter_get_terms($node) {
+  $tids = [];
+  // Get the vids that content_filter cares about.
+  $config = \Drupal::config('content_filter.settings');
+  $vid = $config->get('content_filter_categories') ? $config->get('content_filter_categories') : NULL;
+  if ($vid) {
+    // Load all terms found in term reference fields.
+    // This logic should work for all nodes (published or not).
+    $terms_by_vid = content_filter_node_get_terms($node);
+    if (!empty($terms_by_vid)) {
+        if (!empty($terms_by_vid[$vid])) {
+          foreach ($terms_by_vid[$vid] as $tid => $term) {
+            $tids[$tid] = $tid;
+          }
+      }
+    }
+  }
+  return $tids;
+}
+/**
+ * We organize our data structure by vid and tid.
+ */
+function content_filter_node_get_terms($node) {
+  $terms = &drupal_static(__FUNCTION__);
+  $nid = $node->id();
+  if (!isset($terms[$nid])) {
+    // Get fields of all node.
+    $fields = \Drupal::service('entity_field.manager')->getFieldDefinitions('node', $node->getType());
+    // Get tids from all taxonomy_term_reference fields.
+    foreach ($fields as $field_name => $field) {
+      $field_type = method_exists($field, 'getType') ? $field->getType() : NULL;
+      $target_type = method_exists($field, 'getSetting') ? $field->getSetting('target_type') : NULL;
+      // Get all terms, regardless of language, associated with the node.
+      if ($field_type == 'entity_reference' && $target_type == 'taxonomy_term') {
+        $field_name = $field->get('field_name');
+        if ($items = $node->get($field_name)->getValue()) {
+          foreach ($items as $item) {
+            // We need to term to determine the vocabulary id.
+            if (!empty($item['target_id'])) {
+              $term = Term::load($item['target_id']);
+            }
+            if ($term) {
+              $terms[$node->id()][$term->bundle()][$term->id()] = $term;
+            }
+          }
+        }
+      }
+    }
+  }
+  return isset($terms[$node->id()]) ? $terms[$node->id()] : FALSE;
+}
+/**
+ * Implements hook_node_grants().
+ *
+ * Returns any grants which may give the user permission to perform the
+ * requested op.
+ */
+function content_filter_node_grants(AccountInterface $account, $op) {
+  $grants = [];
+  $grants['content_filter_config_scheme_1'] = _content_filter_user_tids($account, 1, 'grant_view');
+  if (count($grants)) {
+    return $grants;
+  }
+}
+/**
+ * Return the term ids of terms this user is allowed to access.
+ *
+ * Users are granted access to terms either because of who they are,
+ * or because of the roles they have.
+ */
+function _content_filter_user_tids($account, $scheme, $config) {
+  // Grant id 0 is reserved for nodes which were not given a grant id
+  // when they were created. By adding 0 to the grant id, we let the
+  // user view those nodes.
+  $grants = [0];
+  $data = \Drupal::service('user.data')->get('content_filter', $account->id(), 'content_filter_scheme_1') ?: [];
+  if (count($data)) {
+    foreach ($data as $tids) {
+      if (count($tids)) {
+        $grants = array_merge($grants, $tids);
+      }
+    }
+  }
+
+  // Add per-role grants in addition to per-user grants.
+  $settings = \Drupal::config('content_filter.settings');
+  $defaults = $settings->get('content_filter_grants_scheme_1');
+  $defaults = $defaults ? $defaults : [];
+  $roles = $account->getRoles();
+  foreach ($roles as $rid) {
+    if (isset($defaults[$rid]) && count($defaults[$rid])) {
+      foreach ($defaults[$rid] as $tids) {
+        if (count($tids)) {
+          $grants = array_merge($grants, $tids);
+        }
+      }
+    }
+  }
+
+  // Because of some flakiness in the form API and the form we insert under
+  // user settings, we may have a bogus entry with vid set
+  // to ''. Here we make sure not to return that.
+  unset($grants['']);
+  return $grants;
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function content_filter_form_alter(&$form, FormStateInterface $form_state, $form_id) {
+  if ($form_id == 'user_form') {  
+    $form['content_filter']['#weight'] = 2;
+    $user = $form_state->getFormObject()->getEntity();
+    $uid = $user->id();
+    $vocabularies = Vocabulary::loadMultiple();
+    $config = \Drupal::config('content_filter.settings');
+    $vids[] = $config->get('content_filter_categories');
+    $display = $config->get('content_filter_display');
+    if (count($vids)) {
+      $form['content_filter']['content_filter_scheme_1'] = [
+        '#type' => 'details',
+        '#title' => 'Content Filter',
+        '#description' => t('Filter content by preferences.'),
+        '#open' => TRUE,
+        '#tree' => TRUE,
+      ];
+      // Create a form element for each vocabulary.
+      foreach ($vids as $vid) {
+        if (!empty($vocabularies[$vid])) {
+          $v = $vocabularies[$vid];
+          $default_values = [];
+          $data = \Drupal::service('user.data')->get('content_filter', $uid, 'content_filter_scheme_1') ?: [];
+          if (!empty($data[$vid])) {
+            $default_values = $data[$vid];
+          }
+          if ($display == 'checkboxes') {
+            $form['content_filter']['content_filter_scheme_1'][$vid] = ContentFilterForm::termDisplayCheckboxes($v, $default_values);
+          } else {
+            $form['content_filter']['content_filter_scheme_1'][$vid] = ContentFilterForm::termDisplaySelect($v, $default_values);
+          }
+        }
+      }
+      
+    }
+    // Add our custom submit handler.
+    $form['actions']['submit']['#submit'][] = '_content_filter_user_profile_form_submit';
+  }
+}
+
+/**
+ * Submit callback for user profile form to save the Content Filter setting.
+ */
+function _content_filter_user_profile_form_submit($form, FormStateInterface $form_state) {
+  $current_user = \Drupal::currentUser();
+  $uid = $current_user->id();
+  \Drupal::service('user.data')->set('content_filter', $uid, 'content_filter_scheme_1', $form_state->getValue('content_filter_scheme_1'));
+}

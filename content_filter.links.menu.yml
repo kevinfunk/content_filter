@@ -1,0 +1,5 @@
+content_filter.configuration:
+  title: 'Content Filter'
+  description: 'Taxonomy-based filter by content_filter'
+  parent: user.admin_index
+  route_name: content_filter.administration

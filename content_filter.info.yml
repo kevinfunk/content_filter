@@ -1,0 +1,8 @@
+name: Content Filter
+description: Simple content filter based on categories.
+package: Content
+configure: content_filter.administration
+type: module
+core_version_requirement: ^8.8 || ^9
+dependencies:
+  - drupal:taxonomy
