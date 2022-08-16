@@ -3,6 +3,6 @@ description: Simple content filter based on categories.
 package: Content
 configure: content_filter.administration
 type: module
-core_version_requirement: ^8.8 || ^9
+core_version_requirement: ^8.8 || ^9 || ^10
 dependencies:
   - drupal:taxonomy
